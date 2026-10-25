@@ -54,7 +54,24 @@ export interface PreparedTx<TUnsigned, TRequest> {
 // exact check instead of re-implementing it against a copied
 // constant -- there is one definition of "low-S" for the whole SDK.
 export function assertLowS(signature: Signature): void {
-  const s = BigInt(signature.s);
+  let s: bigint;
+  try {
+    s = BigInt(signature.s);
+  } catch {
+    // A malformed hex string must surface as a typed SDK
+    // error, not a raw SyntaxError from BigInt().
+    throw new Error(
+      '[1Money SDK]: Invalid signature - malformed S value (expected 0x-prefixed hex)'
+    );
+  }
+  // S = 0 is not a valid signature scalar; reject it
+  // together with high-S values so only signatures in
+  // the valid low-S range pass.
+  if (s <= 0n) {
+    throw new Error(
+      '[1Money SDK]: Invalid signature - S value must be greater than zero'
+    );
+  }
   if (s > SECP256K1_N_DIV_2) {
     throw new Error(
       '[1Money SDK]: Invalid signature - high S value detected (potential malleability)'
@@ -108,6 +125,14 @@ export function createPreparedTx<
     params.rlpBytes
   ) as ZeroXString;
 
+  // Snapshot the caller's unsigned payload. The original
+  // object stays reachable from the caller's scope, so
+  // without a copy any later mutation would desynchronize
+  // the signed bytes from the request actually sent
+  // (the signature would authorize one payload while the
+  // wire carried another).
+  const unsigned = { ...params.unsigned } as TUnsigned;
+
   const attachSignature = (
     signature: Signature
   ): SignedTx<TUnsigned, TRequest> => {
@@ -116,18 +141,18 @@ export function createPreparedTx<
 
     return {
       kind: params.kind,
-      unsigned: params.unsigned,
+      unsigned,
       signatureHash,
       txHash: calcSignedTxHash(params.rlpBytes, signature),
       signature,
       toRequest: () =>
-        params.toRequest(params.unsigned, signature),
+        params.toRequest(unsigned, signature),
     };
   };
 
   return {
     kind: params.kind,
-    unsigned: params.unsigned,
+    unsigned,
     rlpBytes: params.rlpBytes,
     signatureHash,
     attachSignature,

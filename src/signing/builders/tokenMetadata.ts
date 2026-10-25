@@ -14,9 +14,27 @@ export function validateTokenMetadata(unsigned: TokenMetadataUnsigned) {
 export function tokenMetadataPayloadFields(
   unsigned: TokenMetadataUnsigned
 ): PlpPayload[] {
-  const additionalMetadataRlp = unsigned.additional_metadata.map(item =>
-    rlpValue.list([rlpValue.string(item.key), rlpValue.string(item.value)])
-  );
+  // An omitted `additional_metadata` list is treated as
+  // empty rather than crashing with a TypeError on
+  // `.map`.
+  const entries = unsigned.additional_metadata ?? [];
+
+  const additionalMetadataRlp = entries.map(item => {
+    // Each entry is serialized into the signed bytes, so
+    // a missing `key` or `value` (silently rendered as
+    // "undefined" on the wire) must be caught here, at
+    // build time, instead of producing a signature the
+    // node can never verify.
+    if (item.key === undefined || item.value === undefined) {
+      throw new Error(
+        '[1Money SDK]: Invalid additional_metadata entry - both key and value are required'
+      );
+    }
+    return rlpValue.list([
+      rlpValue.string(item.key),
+      rlpValue.string(item.value),
+    ]);
+  });
 
   return [
     rlpValue.string(unsigned.name),
